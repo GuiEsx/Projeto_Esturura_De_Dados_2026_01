@@ -1,6 +1,3 @@
-//
-// Created by luisg on 20/06/2026.
-//
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,15 +6,15 @@
 
 #define MAX_RESTR 100
 
-#define OP_LE 0  // <=
-#define OP_GE 1  // >=
-#define OP_LT 2  // <
-#define OP_GT 3  // >
-#define OP_EQ 4  // ==
+#define OP_MeI 0  // <=
+#define OP_MaI 1  // >=
+#define OP_Men 2  // <
+#define OP_Ma 3  // >
+#define OP_Ig 4  // ==
 
 typedef struct {
     int coef;   // coeficiente de x
-    int op;     // operador (OP_LE, OP_GE, ...)
+    int op;     // operador (OP_MI, OP_MaI, ...)
     int rhs;    // lado direito da restrição
 } Restricao;
 
@@ -27,11 +24,11 @@ typedef struct {
 } LIA;
 
 int ler_operador(const char* token) {
-    if (strcmp(token, "<=") == 0) return OP_LE;
-    if (strcmp(token, ">=") == 0) return OP_GE;
-    if (strcmp(token, "<")  == 0) return OP_LT;
-    if (strcmp(token, ">")  == 0) return OP_GT;
-    if (strcmp(token, "==") == 0) return OP_EQ;
+    if (strcmp(token, "<=") == 0) return OP_MeI;
+    if (strcmp(token, ">=") == 0) return OP_MaI;
+    if (strcmp(token, "<")  == 0) return OP_Men;
+    if (strcmp(token, ">")  == 0) return OP_Ma;
+    if (strcmp(token, "==") == 0) return OP_Ig;
     printf("Operador invalido: %s\n", token);
     exit(1);
 }
@@ -68,15 +65,15 @@ void ler_arquivo_lia(const char* nome_arquivo, LIA* problema) {
     fclose(arquivo);
 }
 
-// ========== NORMALIZACAO: transforma cada restricao em um intervalo [lo, hi] ==========
+// ========== NORMALIZACAO: transforma cada restricao em um intervalo [min, max] ==========
 //
 // Para "coef * x OP rhs", isolamos x dividindo por coef.
 // Se coef for negativo, o sentido da desigualdade INVERTE (regra de aritmetica).
 // Usamos divisao inteira com cuidado (igual fariamos para garantir x inteiro).
 
-void normalizar_restricao(Restricao r, int* lo, int* hi) {
-    *lo = INT_MIN;
-    *hi = INT_MAX;
+void normalizar_restricao(Restricao r, int* min, int* max) {
+    *min = INT_MIN;
+    *max = INT_MAX;
 
     if (r.coef == 0) {
         printf("Coeficiente 0 invalido.\n");
@@ -86,25 +83,25 @@ void normalizar_restricao(Restricao r, int* lo, int* hi) {
     // valor limite (real) seria rhs / coef; tratamos os casos de
     // arredondamento para manter o dominio dos INTEIROS correto.
     switch (r.op) {
-        case OP_LE: // coef*x <= rhs
-            if (r.coef > 0) *hi = (int) floor((double) r.rhs / r.coef);
-            else            *lo = (int) ceil((double) r.rhs / r.coef);
+        case OP_MeI: // coef*x <= rhs
+            if (r.coef > 0) *max = (int) floor((double) r.rhs / r.coef);
+            else            *min = (int) ceil((double) r.rhs / r.coef);
             break;
-        case OP_GE: // coef*x >= rhs
-            if (r.coef > 0) *lo = (int) ceil((double) r.rhs / r.coef);
-            else            *hi = (int) floor((double) r.rhs / r.coef);
+        case OP_MaI: // coef*x >= rhs
+            if (r.coef > 0) *min = (int) ceil((double) r.rhs / r.coef);
+            else            *max = (int) floor((double) r.rhs / r.coef);
             break;
-        case OP_LT: // coef*x < rhs  ->  coef*x <= rhs-1 (em inteiros)
-            if (r.coef > 0) *hi = (int) floor((double) (r.rhs - 1) / r.coef);
-            else            *lo = (int) ceil((double) (r.rhs - 1) / r.coef);
+        case OP_Men: // coef*x < rhs  ->  coef*x <= rhs-1 (em inteiros)
+            if (r.coef > 0) *max = (int) floor((double) (r.rhs - 1) / r.coef);
+            else            *min = (int) ceil((double) (r.rhs - 1) / r.coef);
             break;
-        case OP_GT: // coef*x > rhs  ->  coef*x >= rhs+1
-            if (r.coef > 0) *lo = (int) ceil((double) (r.rhs + 1) / r.coef);
-            else            *hi = (int) floor((double) (r.rhs + 1) / r.coef);
+        case OP_Ma: // coef*x > rhs  ->  coef*x >= rhs+1
+            if (r.coef > 0) *min = (int) ceil((double) (r.rhs + 1) / r.coef);
+            else            *max = (int) floor((double) (r.rhs + 1) / r.coef);
             break;
-        case OP_EQ: // coef*x == rhs  -> x = rhs/coef, so se divisao for exata
-            if (r.rhs % r.coef != 0) { *lo = 1; *hi = 0; return; } // intervalo vazio
-            *lo = *hi = r.rhs / r.coef;
+        case OP_Ig: // coef*x == rhs  -> x = rhs/coef, so se divisao for exata
+            if (r.rhs % r.coef != 0) { *min = 1; *max = 0; return; }// intervalo vazio
+            *min = *max = r.rhs / r.coef;
             break;
     }
 }
@@ -114,28 +111,28 @@ void normalizar_restricao(Restricao r, int* lo, int* hi) {
 // lista encadeada de literais, percorremos o vetor de restricoes
 // fazendo a interseccao acumulada dos intervalos.
 
-int resolver_lia(LIA* problema, int* lo_final, int* hi_final) {
-    int lo_atual = INT_MIN, hi_atual = INT_MAX;
+int resolver_lia(LIA* problema, int* min_final, int* max_final) {
+    int min_atual = INT_MIN, max_atual = INT_MAX;
 
     for (int i = 0; i < problema->num_restricoes; i++) {
-        int lo, hi;
-        normalizar_restricao(problema->restricoes[i], &lo, &hi);
+        int min, max;
+        normalizar_restricao(problema->restricoes[i], &min, &max);
 
         // interseccao: pega o maior dos minimos e o menor dos maximos
-        if (lo > lo_atual) lo_atual = lo;
-        if (hi < hi_atual) hi_atual = hi;
+        if (min > min_atual) min_atual = min;
+        if (max < max_atual) max_atual = max;
 
         // poda antecipada: se o intervalo ja esta vazio, UNSAT
-        if (lo_atual > hi_atual) {
-            *lo_final = lo_atual;
-            *hi_final = hi_atual;
+        if (min_atual > max_atual) {
+            *min_final = min_atual;
+            *max_final = max_atual;
             return 0; // UNSAT
         }
     }
 
-    *lo_final = lo_atual;
-    *hi_final = hi_atual;
-    return (lo_atual <= hi_atual); // SAT se sobrou pelo menos um inteiro
+    *min_final = min_atual;
+    *max_final = max_atual;
+    return (min_atual <= max_atual); // SAT se sobrou pelo menos um inteiro
 }
 
 // ========== VERIFICACAO FINAL (igual ao "Check Solution" do slide) ==========
@@ -147,17 +144,16 @@ int verificar_solucao(LIA* problema, int x) {
         Restricao r = problema->restricoes[i];
         int valor = r.coef * x;
         switch (r.op) {
-            case OP_LE: if (!(valor <= r.rhs)) return 0; break;
-            case OP_GE: if (!(valor >= r.rhs)) return 0; break;
-            case OP_LT: if (!(valor <  r.rhs)) return 0; break;
-            case OP_GT: if (!(valor >  r.rhs)) return 0; break;
-            case OP_EQ: if (!(valor == r.rhs)) return 0; break;
+            case OP_MeI: if (!(valor <= r.rhs)) return 0; break;
+            case OP_MaI: if (!(valor >= r.rhs)) return 0; break;
+            case OP_Men: if (!(valor <  r.rhs)) return 0; break;
+            case OP_Ma: if (!(valor >  r.rhs)) return 0; break;
+            case OP_Ig: if (!(valor == r.rhs)) return 0; break;
         }
     }
     return 1;
 }
 
-// ========== MAIN ==========
 int main() {
     LIA problema = {0};
     char nome_arq[100];
@@ -168,8 +164,8 @@ int main() {
 
     ler_arquivo_lia(nome_arq, &problema);
 
-    int lo, hi;
-    int status = resolver_lia(&problema, &lo, &hi);
+    int min, max;
+    int status = resolver_lia(&problema, &min, &max);
 
     if (!status) {
         printf("\nUNSAT!\n");
@@ -177,11 +173,11 @@ int main() {
     }
 
     printf("\nSAT!\n");
-    printf("Intervalo final apos interseccao: x in [%d, %d]\n\n", lo, hi);
+    printf("Intervalo final apos interseccao: x in [%d, %d]\n\n", min, max);
 
     // Enumera e confirma cada solucao inteira do intervalo, como no slide
     int alguma_valida = 0;
-    for (int x = lo; x <= hi; x++) {
+    for (int x = min; x <= max; x++) {
         if (verificar_solucao(&problema, x)) {
             printf("x = %d  -> valida\n", x);
             alguma_valida = 1;
